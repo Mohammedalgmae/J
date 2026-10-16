@@ -82,7 +82,10 @@ def translate(req:TranslateIn):
             if r['id'] in answer: r['text_ar']=str(answer[r['id']])[:1000]
         p.write_text(json.dumps(m,ensure_ascii=False),encoding='utf8')
         return {'regions':m['regions'],'message':'اكتملت الترجمة الآلية؛ راجعها قبل إنشاء الصورة.'}
-    except Exception as e: raise HTTPException(502,'فشلت الترجمة. تحقق من المفتاح والفوترة وإعدادات النموذج.')
+    except Exception as e:
+        # Log only safe diagnostic metadata; never log credentials or request contents.
+        print(f"Translation provider error type={type(e).__name__} status={getattr(e, 'status_code', None)}", flush=True)
+        raise HTTPException(502,'فشلت الترجمة. راجع سجل الخدمة لتحديد سبب الخطأ.')
 
 @app.post('/api/render')
 def render(req:RenderIn):
