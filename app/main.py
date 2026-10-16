@@ -96,6 +96,8 @@ async def upload(file:UploadFile=File(...)):
             text=' '.join(z['text'] for z in g['lines'])
             x1,y1,x2,y2=g['box']
             regions.append({'id':f'r{n+1}','text_en':text,'text_ar':'','box':[x1,y1,x2,y2],
+                            # Keep each detected text line separately so cleanup does not erase the whole speech bubble.
+                            'text_boxes':[line['box'][:] for line in g['lines']],
                             'confidence':round(sum(g['conf'])/len(g['conf'])),'font_size':24,'color':'#111111'})
     except Exception as e: raise HTTPException(503,'تعذر تشغيل OCR. حاول بصورة أوضح.')
     m={'image_id':iid,'width':im.width,'height':im.height,'regions':regions}; meta_path(iid).write_text(json.dumps(m,ensure_ascii=False),encoding='utf8')
@@ -149,8 +151,16 @@ def render(req:RenderIn):
     mask=np.zeros(base.shape[:2],dtype=np.uint8)
     for r in m['regions']:
         if not r.get('text_ar','').strip(): continue
-        x1,y1,x2,y2=r['box']; pad=max(2,int((y2-y1)*.12)); cv2.rectangle(mask,(max(0,x1-pad),max(0,y1-pad)),(min(base.shape[1]-1,x2+pad),min(base.shape[0]-1,y2+pad)),255,-1)
-    clean=cv2.inpaint(base,mask,3,cv2.INPAINT_TELEA) if np.any(mask) else base
+        # Prefer tight OCR line boxes over the full multi-line region rectangle.
+        # This preserves more of the original bubble borders and artwork.
+        boxes=r.get('text_boxes') or [r['box']]
+        for box in boxes:
+            x1,y1,x2,y2=[int(v) for v in box]
+            line_h=max(1,y2-y1)
+            pad=max(2,min(5,int(line_h*0.08)))
+            cv2.rectangle(mask,(max(0,x1-pad),max(0,y1-pad)),
+                          (min(base.shape[1]-1,x2+pad),min(base.shape[0]-1,y2+pad)),255,-1)
+    clean=cv2.inpaint(base,mask,2,cv2.INPAINT_TELEA) if np.any(mask) else base
     out=Image.fromarray(cv2.cvtColor(clean,cv2.COLOR_BGR2RGB)); draw=ImageDraw.Draw(out)
     fontpath=next((f for f in ['/usr/share/fonts/truetype/noto/NotoNaskhArabic-Regular.ttf','/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf'] if os.path.exists(f)),None)
     for r in m['regions']:
