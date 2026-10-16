@@ -81,7 +81,7 @@ async def upload(file:UploadFile=File(...)):
                 horizontal_overlap=overlap/denom
                 height=max(1,max(y2-y1,gy2-gy1))
                 center_delta=abs(((x1+x2)/2)-((gx1+gx2)/2))
-                if -height*0.25 <= gap <= height*1.25 and (horizontal_overlap>=0.25 or center_delta<=height*2.5):
+                if -height*0.15 <= gap <= height*0.8 and horizontal_overlap>=0.60:
                     best=group
                     break
             if best is None:
@@ -106,38 +106,65 @@ async def upload(file:UploadFile=File(...)):
 @app.post('/api/translate')
 def translate(req:TranslateIn):
     iid=safe_id(req.image_id); p=meta_path(iid)
-    if not p.exists(): raise HTTPException(404,'الصورة غير موجودة')
+    if not p.exists(): raise HTTPException(404,'الصورة غير موجودة أو انتهت صلاحية ملفاتها؛ ارفع الصفحة مرة أخرى.')
     gemini_key=os.getenv('GEMINI_API_KEY')
     openai_key=os.getenv('OPENAI_API_KEY')
     if not gemini_key and not openai_key:
-        raise HTTPException(503,'الترجمة الآلية غير مفعّلة. أضف GEMINI_API_KEY في إعدادات الاستضافة أو اكتب الترجمة يدويًا.')
-    m=json.loads(p.read_text(encoding='utf8')); lines=[{'id':r['id'],'text':r['text_en']} for r in m['regions'] if r['text_en']]
-    if not lines: return {'regions':m['regions'],'message':'لم يُكتشف نص لترجمته.'}
-    prompt='Translate manga dialogue from English into natural Arabic. Preserve meaning, character tone, and short speech-bubble phrasing. OCR may contain incomplete or imperfect fragments: do not invent missing dialogue or add story details. Translate only the words provided, conservatively. Return ONLY a valid JSON object mapping every supplied id to Arabic text, with no extra keys. Style: '+req.style+'\nTexts: '+json.dumps(lines,ensure_ascii=False)
-    try:
-        if gemini_key:
-            model=os.getenv('GEMINI_MODEL','gemini-3.8-flash')
+        raise HTTPException(503,'الترجمة الآلية غير مفعّلة. أضف GEMINI_API_KEY أو OPENAI_API_KEY في إعدادات Render.')
+    m=json.loads(p.read_text(encoding='utf8'))
+    # Skip empty or very low-confidence OCR to reduce fabricated dialogue from bad OCR.
+    lines=[{'id':r['id'],'text':r['text_en']} for r in m['regions']
+           if r.get('text_en','').strip() and int(r.get('confidence',0))>=35]
+    skipped=sum(1 for r in m['regions'] if r.get('text_en','').strip() and int(r.get('confidence',0))<35)
+    if not lines:
+        return {'regions':m['regions'],'message':'لم تُكتشف نصوص بثقة كافية للترجمة. صحح النصوص يدويًا أو جرّب صورة أوضح.'}
+    prompt=('Translate ONLY the exact English OCR strings below into natural Arabic manga dialogue. '
+            'Do not infer context, repair missing words by guessing, add explanations, or invent dialogue. '
+            'If a supplied string is gibberish or too incomplete to translate reliably, return an empty string for its id. '
+            'Keep each id independent; do not merge different bubbles. Return ONLY a JSON object with exactly the supplied ids. '
+            'Style: '+req.style+'\nOCR strings: '+json.dumps(lines,ensure_ascii=False))
+    errors=[]
+    answer=None
+    # Try Gemini first, then fall back to OpenAI if Gemini is overloaded, times out, or rejects the model/key.
+    if gemini_key:
+        model=os.getenv('GEMINI_MODEL','gemini-2.5-flash').strip()
+        try:
             url='https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+gemini_key
             payload={'contents':[{'parts':[{'text':prompt}]}],
-                     'generationConfig':{'responseMimeType':'application/json','temperature':0.2}}
+                     'generationConfig':{'responseMimeType':'application/json','temperature':0.0}}
             request=urllib.request.Request(url,data=json.dumps(payload).encode('utf-8'),
                                            headers={'Content-Type':'application/json'},method='POST')
-            with urllib.request.urlopen(request,timeout=90) as response:
+            with urllib.request.urlopen(request,timeout=35) as response:
                 result=json.loads(response.read().decode('utf-8'))
             answer_text=result['candidates'][0]['content']['parts'][0]['text']
-        else:
+            answer=json.loads(answer_text)
+        except Exception as e:
+            status=getattr(e,'code',None) or getattr(e,'status_code',None)
+            errors.append('Gemini '+type(e).__name__+(f' HTTP {status}' if status else ''))
+            print('Translation provider fallback: '+errors[-1],flush=True)
+    if answer is None and openai_key:
+        try:
             from openai import OpenAI
-            resp=OpenAI(api_key=openai_key).responses.create(model=os.getenv('OPENAI_MODEL','gpt-4.1-mini'),input=prompt)
-            answer_text=resp.output_text
-        answer=json.loads(answer_text)
-        for r in m['regions']:
-            if r['id'] in answer: r['text_ar']=str(answer[r['id']])[:1000]
-        p.write_text(json.dumps(m,ensure_ascii=False),encoding='utf8')
-        return {'regions':m['regions'],'message':'اكتملت الترجمة الآلية؛ راجعها قبل إنشاء الصورة.'}
-    except Exception as e:
-        status=getattr(e,'code',None) or getattr(e,'status_code',None)
-        print(f"Translation provider error type={type(e).__name__} status={status}", flush=True)
-        raise HTTPException(502,'فشلت الترجمة. راجع سجل الخدمة لتحديد سبب الخطأ.')
+            resp=OpenAI(api_key=openai_key,timeout=45,max_retries=1).responses.create(
+                model=os.getenv('OPENAI_MODEL','gpt-4.1-mini'),input=prompt)
+            answer=json.loads(resp.output_text)
+        except Exception as e:
+            status=getattr(e,'status_code',None)
+            errors.append('OpenAI '+type(e).__name__+(f' HTTP {status}' if status else ''))
+            print('Translation provider failure: '+'; '.join(errors),flush=True)
+    if answer is None:
+        raise HTTPException(502,'تعذرت الترجمة من مزوّدي الخدمة. قد يكون هناك ضغط أو انتهاء الحصة المجانية؛ جرّب مرة أخرى بعد قليل. '+('تفاصيل التشخيص: '+'؛ '.join(errors) if errors else ''))
+    expected={item['id'] for item in lines}
+    if not isinstance(answer,dict):
+        raise HTTPException(502,'رجع محرك الترجمة نتيجة غير مفهومة. حاول مرة أخرى.')
+    for r in m['regions']:
+        if r['id'] in expected:
+            value=answer.get(r['id'],'')
+            r['text_ar']=str(value)[:1000] if value is not None else ''
+    p.write_text(json.dumps(m,ensure_ascii=False),encoding='utf8')
+    msg='اكتملت الترجمة؛ راجع النصوص قبل تركيبها على الصورة.'
+    if skipped: msg+=f' تم تجاوز {skipped} منطقة منخفضة الثقة لتقليل التخمين.'
+    return {'regions':m['regions'],'message':msg}
 
 @app.post('/api/render')
 def render(req:RenderIn):
