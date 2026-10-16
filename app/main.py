@@ -151,7 +151,7 @@ def ocr_selected(req:OCRSelectIn):
             lineboxes.append([lx,ly,rx,ry]); confs.extend(v[5] for v in vals)
         rx1=min(b[0] for b in lineboxes); ry1=min(b[1] for b in lineboxes)
         rx2=max(b[2] for b in lineboxes); ry2=max(b[3] for b in lineboxes)
-        regions.append({'id':f's{bi+1}','text_en':' '.join(texts),'text_ar':'','box':[rx1,ry1,rx2,ry2],
+        regions.append({'id':f's{bi+1}','text_en':' '.join(texts),'text_ar':'','box':[x1,y1,x2,y2],
                         'text_boxes':lineboxes,'confidence':round(sum(confs)/max(1,len(confs))),
                         'font_size':24,'color':'#111111'})
     if not regions: raise HTTPException(400,'المناطق المحددة صغيرة جدًا.')
