@@ -78,7 +78,7 @@ def translate(req:TranslateIn):
     prompt='Translate manga dialogue from English into natural Arabic. Preserve meaning, character tone, and short speech-bubble phrasing. Return ONLY a JSON object mapping each id to Arabic text. Style: '+req.style+'\nTexts: '+json.dumps(lines,ensure_ascii=False)
     try:
         if gemini_key:
-            model=os.getenv('GEMINI_MODEL','gemini-2.5-flash')
+            model=os.getenv('GEMINI_MODEL','gemini-3.8-flash')
             url='https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+gemini_key
             payload={'contents':[{'parts':[{'text':prompt}]}],
                      'generationConfig':{'responseMimeType':'application/json','temperature':0.2}}
