@@ -1,4 +1,4 @@
-import os, io, uuid, json
+import os, io, uuid, json, urllib.request, urllib.error
 from pathlib import Path
 from typing import Optional
 from fastapi import FastAPI, UploadFile, File, HTTPException
@@ -33,7 +33,7 @@ def home(): return FileResponse(STATIC/'index.html')
 def health():
     try: ver=pytesseract.get_tesseract_version(); ocr='Tesseract '+str(ver)
     except Exception: ocr='unavailable'
-    return {'ok':True,'ocr_engine':ocr,'translation_provider':'configured' if os.getenv('OPENAI_API_KEY') else 'manual'}
+    return {'ok':True,'ocr_engine':ocr,'translation_provider':'configured' if (os.getenv('GEMINI_API_KEY') or os.getenv('OPENAI_API_KEY')) else 'manual'}
 
 @app.post('/api/upload')
 async def upload(file:UploadFile=File(...)):
@@ -69,22 +69,36 @@ async def upload(file:UploadFile=File(...)):
 def translate(req:TranslateIn):
     iid=safe_id(req.image_id); p=meta_path(iid)
     if not p.exists(): raise HTTPException(404,'الصورة غير موجودة')
-    key=os.getenv('OPENAI_API_KEY')
-    if not key: raise HTTPException(503,'الترجمة الآلية غير مفعّلة. أضف OPENAI_API_KEY في إعدادات الاستضافة أو اكتب الترجمة يدويًا.')
-    from openai import OpenAI
+    gemini_key=os.getenv('GEMINI_API_KEY')
+    openai_key=os.getenv('OPENAI_API_KEY')
+    if not gemini_key and not openai_key:
+        raise HTTPException(503,'الترجمة الآلية غير مفعّلة. أضف GEMINI_API_KEY في إعدادات الاستضافة أو اكتب الترجمة يدويًا.')
     m=json.loads(p.read_text(encoding='utf8')); lines=[{'id':r['id'],'text':r['text_en']} for r in m['regions'] if r['text_en']]
     if not lines: return {'regions':m['regions'],'message':'لم يُكتشف نص لترجمته.'}
-    prompt='Translate manga dialogue from English into natural Arabic. Preserve meaning, character tone, short speech-bubble phrasing. Return ONLY a JSON object mapping each id to Arabic text. Style: '+req.style+'\nTexts: '+json.dumps(lines,ensure_ascii=False)
+    prompt='Translate manga dialogue from English into natural Arabic. Preserve meaning, character tone, and short speech-bubble phrasing. Return ONLY a JSON object mapping each id to Arabic text. Style: '+req.style+'\nTexts: '+json.dumps(lines,ensure_ascii=False)
     try:
-        resp=OpenAI(api_key=key).responses.create(model=os.getenv('OPENAI_MODEL','gpt-4.1-mini'),input=prompt)
-        answer=json.loads(resp.output_text)
+        if gemini_key:
+            model=os.getenv('GEMINI_MODEL','gemini-2.5-flash')
+            url='https://generativelanguage.googleapis.com/v1beta/models/'+model+':generateContent?key='+gemini_key
+            payload={'contents':[{'parts':[{'text':prompt}]}],
+                     'generationConfig':{'responseMimeType':'application/json','temperature':0.2}}
+            request=urllib.request.Request(url,data=json.dumps(payload).encode('utf-8'),
+                                           headers={'Content-Type':'application/json'},method='POST')
+            with urllib.request.urlopen(request,timeout=90) as response:
+                result=json.loads(response.read().decode('utf-8'))
+            answer_text=result['candidates'][0]['content']['parts'][0]['text']
+        else:
+            from openai import OpenAI
+            resp=OpenAI(api_key=openai_key).responses.create(model=os.getenv('OPENAI_MODEL','gpt-4.1-mini'),input=prompt)
+            answer_text=resp.output_text
+        answer=json.loads(answer_text)
         for r in m['regions']:
             if r['id'] in answer: r['text_ar']=str(answer[r['id']])[:1000]
         p.write_text(json.dumps(m,ensure_ascii=False),encoding='utf8')
         return {'regions':m['regions'],'message':'اكتملت الترجمة الآلية؛ راجعها قبل إنشاء الصورة.'}
     except Exception as e:
-        # Log only safe diagnostic metadata; never log credentials or request contents.
-        print(f"Translation provider error type={type(e).__name__} status={getattr(e, 'status_code', None)}", flush=True)
+        status=getattr(e,'code',None) or getattr(e,'status_code',None)
+        print(f"Translation provider error type={type(e).__name__} status={status}", flush=True)
         raise HTTPException(502,'فشلت الترجمة. راجع سجل الخدمة لتحديد سبب الخطأ.')
 
 @app.post('/api/render')
