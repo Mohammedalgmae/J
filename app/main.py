@@ -26,6 +26,7 @@ class RenderIn(BaseModel):
     font_size:int=Field(default=24,ge=10,le=100)
     color:str=Field(default='#111111',pattern=r'^#[0-9a-fA-F]{6}$')
 class TranslateIn(BaseModel): image_id:str; style:str='natural'; corrections:dict[str,str]=Field(default_factory=dict)
+class OCRSelectIn(BaseModel): image_id:str; boxes:list[list[int]]
 
 @app.get('/',response_class=HTMLResponse)
 def home(): return FileResponse(STATIC/'index.html')
@@ -102,6 +103,61 @@ async def upload(file:UploadFile=File(...)):
     except Exception as e: raise HTTPException(503,'تعذر تشغيل OCR. حاول بصورة أوضح.')
     m={'image_id':iid,'width':im.width,'height':im.height,'regions':regions}; meta_path(iid).write_text(json.dumps(m,ensure_ascii=False),encoding='utf8')
     return {'image_id':iid,'width':im.width,'height':im.height,'regions':regions,'preview_url':f'/api/image/{iid}/original','message':f'تم رفع الصورة. اكتُشفت {len(regions)} منطقة نصية؛ صحّح النتائج عند الحاجة.'}
+
+
+@app.post('/api/ocr-selected')
+def ocr_selected(req:OCRSelectIn):
+    iid=safe_id(req.image_id); p=meta_path(iid)
+    if not p.exists(): raise HTTPException(404,'الصورة غير موجودة؛ ارفع الصفحة مرة أخرى.')
+    original=DATA/f'{iid}-original.png'
+    if not original.exists(): raise HTTPException(404,'ملف الصورة الأصلي غير موجود.')
+    m=json.loads(p.read_text(encoding='utf8'))
+    im=Image.open(original).convert('RGB')
+    W,H=im.size
+    if not req.boxes: raise HTTPException(400,'حدد منطقة واحدة على الصورة على الأقل.')
+    regions=[]
+    for bi,rawbox in enumerate(req.boxes[:30]):
+        if len(rawbox)!=4: continue
+        x1,y1,x2,y2=[int(v) for v in rawbox]
+        x1=max(0,min(W-1,x1)); x2=max(0,min(W,x2))
+        y1=max(0,min(H-1,y1)); y2=max(0,min(H,y2))
+        if x2-x1<12 or y2-y1<12: continue
+        crop=im.crop((x1,y1,x2,y2))
+        # OCR only inside the user's chosen rectangle.
+        data=pytesseract.image_to_data(crop,lang='eng',output_type=Output.DICT,config='--oem 3 --psm 6')
+        words=[]
+        for k,word in enumerate(data['text']):
+            word=word.strip()
+            try: conf=float(data['conf'][k])
+            except: conf=-1
+            if not word or conf<10: continue
+            xx,yy,ww,hh=[int(data[a][k]) for a in ('left','top','width','height')]
+            if ww<=0 or hh<=0: continue
+            words.append((int(data['block_num'][k]),int(data['par_num'][k]),int(data['line_num'][k]),xx,word,yy,ww,hh,conf))
+        if not words:
+            regions.append({'id':f's{bi+1}','text_en':'','text_ar':'','box':[x1,y1,x2,y2],
+                            'text_boxes':[[x1,y1,x2,y2]],'confidence':0,'font_size':24,'color':'#111111'})
+            continue
+        byline={}
+        for block,par,line,xx,word,yy,ww,hh,conf in words:
+            key=(block,par,line)
+            byline.setdefault(key,[]).append((xx,word,yy,ww,hh,conf))
+        lineboxes=[]; texts=[]; confs=[]
+        for vals in byline.values():
+            vals.sort(key=lambda z:z[0])
+            texts.append(' '.join(v[1] for v in vals))
+            lx=min(v[0] for v in vals)+x1; ly=min(v[2] for v in vals)+y1
+            rx=max(v[0]+v[3] for v in vals)+x1; ry=max(v[2]+v[4] for v in vals)+y1
+            lineboxes.append([lx,ly,rx,ry]); confs.extend(v[5] for v in vals)
+        rx1=min(b[0] for b in lineboxes); ry1=min(b[1] for b in lineboxes)
+        rx2=max(b[2] for b in lineboxes); ry2=max(b[3] for b in lineboxes)
+        regions.append({'id':f's{bi+1}','text_en':' '.join(texts),'text_ar':'','box':[rx1,ry1,rx2,ry2],
+                        'text_boxes':lineboxes,'confidence':round(sum(confs)/max(1,len(confs))),
+                        'font_size':24,'color':'#111111'})
+    if not regions: raise HTTPException(400,'المناطق المحددة صغيرة جدًا.')
+    m['regions']=regions
+    p.write_text(json.dumps(m,ensure_ascii=False),encoding='utf8')
+    return {'image_id':iid,'regions':regions,'message':f'تم فحص {len(regions)} منطقة حددتها يدويًا.'}
 
 @app.post('/api/translate')
 def translate(req:TranslateIn):
