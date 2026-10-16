@@ -25,7 +25,7 @@ class RenderIn(BaseModel):
     text_ar:str=Field(max_length=1000)
     font_size:int=Field(default=24,ge=10,le=100)
     color:str=Field(default='#111111',pattern=r'^#[0-9a-fA-F]{6}$')
-class TranslateIn(BaseModel): image_id:str; style:str='natural'
+class TranslateIn(BaseModel): image_id:str; style:str='natural'; corrections:dict[str,str]=Field(default_factory=dict)
 
 @app.get('/',response_class=HTMLResponse)
 def home(): return FileResponse(STATIC/'index.html')
@@ -112,6 +112,12 @@ def translate(req:TranslateIn):
     if not gemini_key and not openai_key:
         raise HTTPException(503,'الترجمة الآلية غير مفعّلة. أضف GEMINI_API_KEY أو OPENAI_API_KEY في إعدادات Render.')
     m=json.loads(p.read_text(encoding='utf8'))
+    # Accept user corrections to OCR before sending text to the translator.
+    if req.corrections:
+        for region in m['regions']:
+            if region['id'] in req.corrections:
+                region['text_en']=str(req.corrections[region['id']])[:1000]
+        p.write_text(json.dumps(m,ensure_ascii=False),encoding='utf8')
     # Skip empty or very low-confidence OCR to reduce fabricated dialogue from bad OCR.
     lines=[{'id':r['id'],'text':r['text_en']} for r in m['regions']
            if r.get('text_en','').strip() and int(r.get('confidence',0))>=35]
