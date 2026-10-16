@@ -47,20 +47,56 @@ async def upload(file:UploadFile=File(...)):
     except Exception: raise HTTPException(400,'تعذر قراءة الصورة')
     iid=uuid.uuid4().hex; original=DATA/f'{iid}-original.png'; im.save(original)
     try:
-        d=pytesseract.image_to_data(im,lang='eng',output_type=Output.DICT,config='--psm 11')
-        groups={}
+        # Block-oriented OCR is less likely to split dialogue into isolated words.
+        d=pytesseract.image_to_data(im,lang='eng',output_type=Output.DICT,config='--oem 3 --psm 6')
+        line_groups={}
         for k,word in enumerate(d['text']):
             word=word.strip()
             try: conf=float(d['conf'][k])
             except: conf=-1
-            if not word or conf<20: continue
+            if not word or conf<25: continue
             x,y,w,h=[int(d[a][k]) for a in ('left','top','width','height')]
+            if w<=0 or h<=0: continue
             key=(d['block_num'][k],d['par_num'][k],d['line_num'][k])
-            if key not in groups: groups[key]={'words':[],'box':[x,y,x+w,y+h],'conf':[]}
-            g=groups[key]; g['words'].append(word); g['conf'].append(conf); b=g['box']; g['box']=[min(b[0],x),min(b[1],y),max(b[2],x+w),max(b[3],y+h)]
+            if key not in line_groups: line_groups[key]={'words':[],'box':[x,y,x+w,y+h],'conf':[]}
+            g=line_groups[key]; g['words'].append((x,word)); g['conf'].append(conf)
+            b=g['box']; g['box']=[min(b[0],x),min(b[1],y),max(b[2],x+w),max(b[3],y+h)]
+        lines=[]
+        for g in line_groups.values():
+            g['words'].sort(key=lambda z:z[0])
+            g['text']=' '.join(z[1] for z in g['words'])
+            g['confidence']=sum(g['conf'])/len(g['conf'])
+            lines.append(g)
+        lines.sort(key=lambda g:(g['box'][1],g['box'][0]))
+        # Merge nearby lines when their boxes overlap horizontally and the gap is small.
+        groups=[]
+        for line in lines:
+            x1,y1,x2,y2=line['box']
+            best=None
+            for group in reversed(groups[-5:]):
+                gx1,gy1,gx2,gy2=group['box']
+                gap=y1-gy2
+                overlap=max(0,min(x2,gx2)-max(x1,gx1))
+                denom=max(1,min(x2-x1,gx2-gx1))
+                horizontal_overlap=overlap/denom
+                height=max(1,max(y2-y1,gy2-gy1))
+                center_delta=abs(((x1+x2)/2)-((gx1+gx2)/2))
+                if -height*0.25 <= gap <= height*1.25 and (horizontal_overlap>=0.25 or center_delta<=height*2.5):
+                    best=group
+                    break
+            if best is None:
+                groups.append({'lines':[line],'box':line['box'][:],'conf':[line['confidence']]})
+            else:
+                best['lines'].append(line)
+                b=best['box']; best['box']=[min(b[0],x1),min(b[1],y1),max(b[2],x2),max(b[3],y2)]
+                best['conf'].append(line['confidence'])
         regions=[]
-        for n,g in enumerate(groups.values()):
-            x1,y1,x2,y2=g['box']; regions.append({'id':f'r{n+1}','text_en':' '.join(g['words']),'text_ar':'','box':[x1,y1,x2,y2],'confidence':round(sum(g['conf'])/len(g['conf'])),'font_size':24,'color':'#111111'})
+        for n,g in enumerate(groups):
+            g['lines'].sort(key=lambda z:(z['box'][1],z['box'][0]))
+            text=' '.join(z['text'] for z in g['lines'])
+            x1,y1,x2,y2=g['box']
+            regions.append({'id':f'r{n+1}','text_en':text,'text_ar':'','box':[x1,y1,x2,y2],
+                            'confidence':round(sum(g['conf'])/len(g['conf'])),'font_size':24,'color':'#111111'})
     except Exception as e: raise HTTPException(503,'تعذر تشغيل OCR. حاول بصورة أوضح.')
     m={'image_id':iid,'width':im.width,'height':im.height,'regions':regions}; meta_path(iid).write_text(json.dumps(m,ensure_ascii=False),encoding='utf8')
     return {'image_id':iid,'width':im.width,'height':im.height,'regions':regions,'preview_url':f'/api/image/{iid}/original','message':f'تم رفع الصورة. اكتُشفت {len(regions)} منطقة نصية؛ صحّح النتائج عند الحاجة.'}
@@ -75,7 +111,7 @@ def translate(req:TranslateIn):
         raise HTTPException(503,'الترجمة الآلية غير مفعّلة. أضف GEMINI_API_KEY في إعدادات الاستضافة أو اكتب الترجمة يدويًا.')
     m=json.loads(p.read_text(encoding='utf8')); lines=[{'id':r['id'],'text':r['text_en']} for r in m['regions'] if r['text_en']]
     if not lines: return {'regions':m['regions'],'message':'لم يُكتشف نص لترجمته.'}
-    prompt='Translate manga dialogue from English into natural Arabic. Preserve meaning, character tone, and short speech-bubble phrasing. Return ONLY a JSON object mapping each id to Arabic text. Style: '+req.style+'\nTexts: '+json.dumps(lines,ensure_ascii=False)
+    prompt='Translate manga dialogue from English into natural Arabic. Preserve meaning, character tone, and short speech-bubble phrasing. OCR may contain incomplete or imperfect fragments: do not invent missing dialogue or add story details. Translate only the words provided, conservatively. Return ONLY a valid JSON object mapping every supplied id to Arabic text, with no extra keys. Style: '+req.style+'\nTexts: '+json.dumps(lines,ensure_ascii=False)
     try:
         if gemini_key:
             model=os.getenv('GEMINI_MODEL','gemini-3.8-flash')
