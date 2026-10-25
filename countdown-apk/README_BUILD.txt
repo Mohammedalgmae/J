@@ -1,0 +1,1 @@
+Cloud build trigger for Dammam Countdown APK. The source HTML is in app/src/main/assets/index.html.
