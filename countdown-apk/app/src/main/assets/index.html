@@ -1,0 +1,32 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>عداد التقويم الدراسي بالدمام 1448 هـ</title>
+<style>
+:root{--bg-color:#0f172a;--card-bg:#1e293b;--accent:#38bdf8;--text-main:#f8fafc;--text-muted:#94a3b8}
+body{font-family:system-ui,-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Oxygen,Ubuntu,Cantarell,sans-serif;background-color:var(--bg-color);color:var(--text-main);margin:0;padding:20px;display:flex;flex-direction:column;align-items:center}
+h1{font-size:1.8rem;margin-bottom:5px;text-align:center;color:var(--accent)}
+.subtitle{font-size:1rem;color:var(--text-muted);margin-bottom:25px;text-align:center}
+.container{width:100%;max-width:600px;display:flex;flex-direction:column;gap:20px}
+.card{background-color:var(--card-bg);border-radius:16px;padding:20px;box-shadow:0 4px 6px -1px rgba(0,0,0,.1),0 2px 4px -1px rgba(0,0,0,.06);border:1px solid rgba(255,255,255,.05)}
+.card-header{display:flex;justify-content:space-between;align-items:center;margin-bottom:15px;border-right:4px solid var(--accent);padding-right:10px}
+.card-title{font-size:1.1rem;font-weight:bold;color:var(--text-main)}
+.card-date{font-size:.9rem;color:var(--accent);font-weight:500}
+.countdown-grid{display:flex;justify-content:space-between;gap:10px}
+.time-box{flex:1;background:rgba(0,0,0,.2);padding:10px;border-radius:12px;text-align:center}
+.num{font-size:1.5rem;font-weight:800;color:var(--accent);font-variant-numeric:tabular-nums}
+.label{font-size:.75rem;color:var(--text-muted);margin-top:4px}
+@media(max-width:380px){body{padding:12px}.card{padding:14px}.countdown-grid{gap:5px}.time-box{padding:8px 4px}.num{font-size:1.2rem}.card-title{font-size:.95rem}.card-date{font-size:.8rem}}
+</style></head><body>
+<h1>⏱️ عداد التقويم الدراسي - الدمام</h1><div class="subtitle">العام الدراسي 1448 هـ</div>
+<div class="container">
+<div class="card"><div class="card-header"><div class="card-title">🍂 إجازة الخريف</div><div class="card-date">2026/11/20</div></div><div class="countdown-grid" id="timer-autumn"><div class="time-box"><div class="num" id="autumn-d">00</div><div class="label">يوم</div></div><div class="time-box"><div class="num" id="autumn-h">00</div><div class="label">ساعة</div></div><div class="time-box"><div class="num" id="autumn-m">00</div><div class="label">دقيقة</div></div><div class="time-box"><div class="num" id="autumn-s">00</div><div class="label">ثانية</div></div></div></div>
+<div class="card"><div class="card-header"><div class="card-title">🏫 نهاية الفصل الدراسي الأول</div><div class="card-date">2027/01/08</div></div><div class="countdown-grid" id="timer-term1"><div class="time-box"><div class="num" id="term1-d">00</div><div class="label">يوم</div></div><div class="time-box"><div class="num" id="term1-h">00</div><div class="label">ساعة</div></div><div class="time-box"><div class="num" id="term1-m">00</div><div class="label">دقيقة</div></div><div class="time-box"><div class="num" id="term1-s">00</div><div class="label">ثانية</div></div></div></div>
+<div class="card"><div class="card-header"><div class="card-title">🇸🇦 إجازة يوم التأسيس</div><div class="card-date">2027/02/19</div></div><div class="countdown-grid" id="timer-foundation"><div class="time-box"><div class="num" id="foundation-d">00</div><div class="label">يوم</div></div><div class="time-box"><div class="num" id="foundation-h">00</div><div class="label">ساعة</div></div><div class="time-box"><div class="num" id="foundation-m">00</div><div class="label">دقيقة</div></div><div class="time-box"><div class="num" id="foundation-s">00</div><div class="label">ثانية</div></div></div></div>
+<div class="card"><div class="card-header"><div class="card-title">🎓 نهاية العام الدراسي بالكامل</div><div class="card-date">2027/06/24</div></div><div class="countdown-grid" id="timer-end"><div class="time-box"><div class="num" id="end-d">00</div><div class="label">يوم</div></div><div class="time-box"><div class="num" id="end-h">00</div><div class="label">ساعة</div></div><div class="time-box"><div class="num" id="end-m">00</div><div class="label">دقيقة</div></div><div class="time-box"><div class="num" id="end-s">00</div><div class="label">ثانية</div></div></div></div>
+</div><script>
+const targets={autumn:new Date("2026-11-20T00:00:00").getTime(),term1:new Date("2027-01-08T00:00:00").getTime(),foundation:new Date("2027-02-19T00:00:00").getTime(),end:new Date("2027-06-24T00:00:00").getTime()};
+function updateCountdowns(){const now=new Date().getTime();for(let key in targets){const distance=targets[key]-now;if(distance<0){for(const unit of ["d","h","m","s"])document.getElementById(`${key}-${unit}`).innerText="00";continue}const days=Math.floor(distance/(1000*60*60*24));const hours=Math.floor((distance%(1000*60*60*24))/(1000*60*60));const minutes=Math.floor((distance%(1000*60*60))/(1000*60));const seconds=Math.floor((distance%(1000*60))/1000);document.getElementById(`${key}-d`).innerText=String(days).padStart(2,"0");document.getElementById(`${key}-h`).innerText=String(hours).padStart(2,"0");document.getElementById(`${key}-m`).innerText=String(minutes).padStart(2,"0");document.getElementById(`${key}-s`).innerText=String(seconds).padStart(2,"0")}}
+setInterval(updateCountdowns,1000);updateCountdowns();
+</script></body></html>
